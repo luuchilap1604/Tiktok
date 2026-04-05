@@ -39,7 +39,7 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
             num_sessions=len(ms_tokens) if ms_tokens else 1,
             ms_tokens=ms_tokens or None,   # None → tự lấy token từ browser
             headless=True,
-            browser="webkit",
+            browser=os.getenv("TIKTOK_BROWSER", "chromium"),
             sleep_after=5,                 # Đợi 5s để TikTok set msToken cookie
         )
 

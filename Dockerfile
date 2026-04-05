@@ -12,7 +12,7 @@ COPY dashboard/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright + webkit with all system deps
-RUN playwright install webkit --with-deps
+RUN playwright install chromium --with-deps
 
 # Copy TikTokApi package (crawler imports it)
 COPY TikTokApi/ ./TikTokApi/
@@ -24,6 +24,7 @@ COPY dashboard/ ./dashboard/
 RUN mkdir -p /data
 
 ENV DATA_DIR=/data
+ENV TIKTOK_BROWSER=chromium
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app/dashboard
