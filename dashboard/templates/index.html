@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TikTok Vietnam - Top Comments</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-title">
+                <span class="logo">&#9829;</span>
+                <h1>TikTok Vietnam - Top Comments Today</h1>
+            </div>
+            <p class="header-subtitle">
+                Top 10 comments with most likes across trending videos in Vietnam.
+                Updated at 6:00 AM &amp; 6:00 PM daily.
+            </p>
+        </header>
+
+        <!-- Controls -->
+        <div class="controls">
+            <div class="controls-left">
+                <label for="snapshot-select">Snapshot:</label>
+                <select id="snapshot-select" onchange="changeSnapshot(this.value)">
+                    <option value="">Latest</option>
+                    {% if snapshots %}
+                        {% for s in snapshots %}
+                        <option value="{{ s.filename }}"
+                            {% if selected_snapshot == s.filename %}selected{% endif %}>
+                            {{ s.label }}
+                        </option>
+                        {% endfor %}
+                    {% endif %}
+                </select>
+            </div>
+            <div class="controls-right">
+                {% if data %}
+                <span class="meta-badge">
+                    {{ data.videos_crawled }} videos crawled
+                </span>
+                <span class="meta-badge">
+                    {{ data.total_comments_found }} comments found
+                </span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Main Table -->
+        {% if data and data.top_comments %}
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="col-rank">#</th>
+                        <th class="col-comment">Comment</th>
+                        <th class="col-likes">Total Likes</th>
+                        <th class="col-delta">Growth</th>
+                        <th class="col-author">Author</th>
+                        <th class="col-video">Video</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for comment in data.top_comments %}
+                    <tr>
+                        <td class="col-rank">
+                            <span class="rank {% if loop.index <= 3 %}rank-top{% endif %}">
+                                {{ loop.index }}
+                            </span>
+                        </td>
+                        <td class="col-comment">
+                            <div class="comment-text">{{ comment.text }}</div>
+                            <button class="copy-btn" onclick="copyText(this, '{{ comment.text|e }}')" title="Copy comment to find it on TikTok">
+                                Copy
+                            </button>
+                        </td>
+                        <td class="col-likes">
+                            <span class="likes-badge">
+                                &#9829; {{ "{:,}".format(comment.likes) }}
+                            </span>
+                        </td>
+                        <td class="col-delta">
+                            {% if comment.delta_likes is not none and comment.delta_likes != none %}
+                                <span class="delta-badge {% if comment.delta_likes > 0 %}delta-positive{% elif comment.delta_likes < 0 %}delta-negative{% else %}delta-neutral{% endif %}">
+                                    {% if comment.delta_likes > 0 %}+{% endif %}{{ "{:,}".format(comment.delta_likes) }}
+                                </span>
+                                {% if comment.delta_pct is not none %}
+                                <span class="delta-pct {% if comment.delta_pct > 0 %}delta-positive{% elif comment.delta_pct < 0 %}delta-negative{% else %}delta-neutral{% endif %}">
+                                    {% if comment.delta_pct > 0 %}+{% endif %}{{ comment.delta_pct }}%
+                                </span>
+                                {% endif %}
+                                <span class="delta-period">vs {{ comment.delta_period }}</span>
+                            {% else %}
+                                <span class="delta-new">new</span>
+                            {% endif %}
+                        </td>
+                        <td class="col-author">
+                            <a href="https://www.tiktok.com/@{{ comment.author_username }}"
+                               target="_blank" class="author-link">
+                                @{{ comment.author_username }}
+                            </a>
+                        </td>
+                        <td class="col-video">
+                            <a href="https://www.tiktok.com/@{{ comment.video_author }}/video/{{ comment.video_id }}"
+                               target="_blank" class="video-link">
+                                View Video
+                            </a>
+                            <span class="video-desc" title="{{ comment.video_desc }}">
+                                {{ comment.video_desc[:40] }}{% if comment.video_desc|length > 40 %}...{% endif %}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <!-- Empty State -->
+        <div class="empty-state">
+            <div class="empty-icon">&#128270;</div>
+            <h2>No data available yet</h2>
+            <p>Run the crawler first to collect trending comments.</p>
+            <code>cd dashboard && python crawler.py</code>
+        </div>
+        {% endif %}
+
+        <!-- Footer -->
+        <footer class="footer">
+            {% if data %}
+            <span>Last updated: {{ data.crawled_at[:19].replace("T", " ") }} UTC</span>
+            <span class="separator">|</span>
+            {% endif %}
+            <span>TikTok Vietnam Top Comments Dashboard</span>
+            <span class="separator">|</span>
+            <span>Powered by <a href="https://github.com/davidteather/TikTok-Api" target="_blank">TikTok-Api</a></span>
+        </footer>
+    </div>
+
+    <script>
+        function changeSnapshot(filename) {
+            if (filename) {
+                window.location.href = '/?snapshot=' + filename;
+            } else {
+                window.location.href = '/';
+            }
+        }
+
+        function copyText(btn, text) {
+            navigator.clipboard.writeText(text).then(function() {
+                var original = btn.textContent;
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(function() {
+                    btn.textContent = original;
+                    btn.classList.remove('copied');
+                }, 1500);
+            });
+        }
+    </script>
+</body>
+</html>

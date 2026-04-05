@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:goodailist.com)",
+      "Bash(pip install:*)",
+      "Bash(pip3 install:*)",
+      "Bash(curl -s http://127.0.0.1:8000/api/latest)",
+      "Bash(python3 -m json.tool)",
+      "Bash(xargs kill:*)",
+      "Bash(python3 -c ':*)"
+    ]
+  }
+}
