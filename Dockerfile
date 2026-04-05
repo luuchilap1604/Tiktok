@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y \
 COPY dashboard/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright + webkit with all system deps
-RUN playwright install chromium --with-deps
+# Install Playwright browsers with all system deps (crawler can fallback by browser)
+RUN playwright install chromium webkit --with-deps
 
 # Copy TikTokApi package (crawler imports it)
 COPY TikTokApi/ ./TikTokApi/

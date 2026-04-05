@@ -35,13 +35,45 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
     errors = []
 
     async with TikTokApi() as api:
-        await api.create_sessions(
-            num_sessions=len(ms_tokens) if ms_tokens else 1,
-            ms_tokens=ms_tokens or None,   # None → tự lấy token từ browser
-            headless=True,
-            browser=os.getenv("TIKTOK_BROWSER", "chromium"),
-            sleep_after=5,                 # Đợi 5s để TikTok set msToken cookie
-        )
+        # Try multiple session strategies to improve reliability on cloud hosts.
+        browser_hint = os.getenv("TIKTOK_BROWSER", "chromium")
+        strategies = [
+            {"browser": browser_hint, "sleep_after": 5},
+            {"browser": "chromium", "sleep_after": 8},
+            {"browser": "webkit", "sleep_after": 8},
+        ]
+
+        session_created = False
+        session_errors = []
+        for s in strategies:
+            try:
+                await api.create_sessions(
+                    num_sessions=len(ms_tokens) if ms_tokens else 1,
+                    ms_tokens=ms_tokens or None,   # None → tự lấy token từ browser
+                    headless=True,
+                    browser=s["browser"],
+                    sleep_after=s["sleep_after"],
+                    timeout=45000,
+                    allow_partial_sessions=True,
+                    min_sessions=1,
+                )
+                session_created = True
+                print(f"[Crawler] Session created with browser={s['browser']}")
+                break
+            except Exception as e:
+                msg = f"session strategy failed ({s['browser']}): {e}"
+                print(f"[Crawler] {msg}")
+                session_errors.append(msg)
+
+        if not session_created:
+            return {
+                "crawled_at": datetime.now(timezone.utc).isoformat(),
+                "period": f"{datetime.now(timezone.utc).hour:02d}00",
+                "videos_crawled": 0,
+                "total_comments_found": 0,
+                "errors": session_errors or ["Failed to create any valid session"],
+                "top_comments": [],
+            }
 
         # Override region to Vietnam
         for session in api.sessions:
@@ -87,6 +119,7 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
         except Exception as e:
             err_msg = f"Error fetching trending videos: {e}"
             print(f"[Crawler] {err_msg}")
+            errors.extend(session_errors)
             errors.append(err_msg)
 
     # Sort by likes descending, take top N
