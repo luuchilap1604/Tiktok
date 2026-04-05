@@ -10,6 +10,7 @@ import os
 import random
 import sys
 from datetime import datetime, timezone
+from urllib.parse import unquote, urlparse
 
 # Add parent directory to path so we can import TikTokApi
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -75,6 +76,52 @@ def get_video_like_count(video_dict: dict) -> int:
     return 0
 
 
+def _parse_proxy_url(proxy_url: str) -> dict | None:
+    """Parse proxy URL into Playwright proxy settings dict."""
+    if not proxy_url:
+        return None
+
+    raw = proxy_url.strip()
+    if not raw:
+        return None
+
+    # Accept host:port and default to http when no scheme is provided.
+    if "://" not in raw:
+        raw = f"http://{raw}"
+
+    parsed = urlparse(raw)
+    if not parsed.hostname or not parsed.port:
+        return None
+
+    server = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+    proxy = {"server": server}
+
+    if parsed.username:
+        proxy["username"] = unquote(parsed.username)
+    if parsed.password:
+        proxy["password"] = unquote(parsed.password)
+
+    return proxy
+
+
+def get_proxies_from_env() -> list[dict] | None:
+    """Build list of Playwright proxies from env var(s)."""
+    # Preferred: comma-separated list for rotation.
+    proxy_urls = os.getenv("TIKTOK_PROXY_URLS", "").strip()
+    if proxy_urls:
+        proxies = []
+        for item in proxy_urls.split(","):
+            p = _parse_proxy_url(item)
+            if p is not None:
+                proxies.append(p)
+        return proxies or None
+
+    # Backward-compatible single proxy setting.
+    single = os.getenv("TIKTOK_PROXY_URL", "").strip()
+    p = _parse_proxy_url(single)
+    return [p] if p is not None else None
+
+
 async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
     """
     Crawl trending videos in Vietnam, collect comments,
@@ -90,6 +137,9 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
     async with TikTokApi() as api:
         # Try multiple session strategies to improve reliability on cloud hosts.
         browser_hint = os.getenv("TIKTOK_BROWSER", "chromium")
+        proxies = get_proxies_from_env()
+        if proxies:
+            print(f"[Crawler] Proxy enabled with {len(proxies)} configured endpoint(s)")
         strategies = [
             {"browser": browser_hint, "sleep_after": 5},
             {"browser": "chromium", "sleep_after": 8},
@@ -105,6 +155,7 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
                     ms_tokens=ms_tokens or None,   # None → tự lấy token từ browser
                     headless=True,
                     browser=s["browser"],
+                    proxies=proxies,
                     sleep_after=s["sleep_after"],
                     timeout=45000,
                     allow_partial_sessions=True,
