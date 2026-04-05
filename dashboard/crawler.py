@@ -17,9 +17,42 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from TikTokApi import TikTokApi
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
-TRENDING_VIDEO_COUNT = 30
+TRENDING_VIDEO_COUNT = 120
+MAX_FILTERED_VIDEOS = 30
+RECENT_DAYS = 3
 COMMENTS_PER_VIDEO = 50
 TOP_N = 10
+
+
+def is_recent_video(video_dict: dict, max_age_days: int = RECENT_DAYS) -> bool:
+    """Return True when video createTime is within max_age_days."""
+    create_time = video_dict.get("createTime")
+    if create_time is None:
+        return False
+
+    try:
+        ts = int(create_time)
+    except (TypeError, ValueError):
+        return False
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    return now_ts - ts <= max_age_days * 24 * 60 * 60
+
+
+def is_vietnam_video(video_dict: dict) -> bool:
+    """Best-effort Vietnam filter based on region hints in the payload."""
+    candidates = [
+        video_dict.get("region"),
+        video_dict.get("locationCreated"),
+        video_dict.get("author", {}).get("region"),
+    ]
+    normalized = {str(c).strip().upper() for c in candidates if c}
+
+    # Many payloads do not expose region directly. If no hint exists,
+    # keep the video because session params already force VN region.
+    if not normalized:
+        return True
+    return "VN" in normalized
 
 
 async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
@@ -82,16 +115,25 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
             session.params["browser_language"] = "vi-VN"
             session.params["language"] = "vi-VN"
 
-        print(f"[Crawler] Fetching {TRENDING_VIDEO_COUNT} trending videos (VN)...")
+        print(
+            f"[Crawler] Fetching up to {TRENDING_VIDEO_COUNT} trending candidates (VN), "
+            f"keeping max {MAX_FILTERED_VIDEOS} videos from last {RECENT_DAYS} days..."
+        )
 
         try:
             async for video in api.trending.videos(count=TRENDING_VIDEO_COUNT):
+                video_payload = video.as_dict or {}
+                if not is_recent_video(video_payload, max_age_days=RECENT_DAYS):
+                    continue
+                if not is_vietnam_video(video_payload):
+                    continue
+
                 video_id = video.id
                 video_author = getattr(video.author, "username", "unknown") if video.author else "unknown"
-                video_desc = video.as_dict.get("desc", "")[:100]
+                video_desc = video_payload.get("desc", "")[:100]
                 videos_crawled += 1
 
-                print(f"  [{videos_crawled}/{TRENDING_VIDEO_COUNT}] Video {video_id} by @{video_author}")
+                print(f"  [{videos_crawled}/{MAX_FILTERED_VIDEOS}] Video {video_id} by @{video_author}")
 
                 try:
                     comment_count = 0
@@ -115,6 +157,9 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
 
                 # Random delay giữa các video để tránh rate limiting
                 await asyncio.sleep(random.uniform(2, 5))
+
+                if videos_crawled >= MAX_FILTERED_VIDEOS:
+                    break
 
         except Exception as e:
             err_msg = f"Error fetching trending videos: {e}"
