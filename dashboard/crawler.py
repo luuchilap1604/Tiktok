@@ -22,6 +22,8 @@ MAX_FILTERED_VIDEOS = 30
 RECENT_DAYS = 3
 COMMENTS_PER_VIDEO = 50
 TOP_N = 10
+VIDEO_MIN_LIKES = 10_000
+COMMENT_MIN_LIKES = 5_000
 
 
 def is_recent_video(video_dict: dict, max_age_days: int = RECENT_DAYS) -> bool:
@@ -53,6 +55,24 @@ def is_vietnam_video(video_dict: dict) -> bool:
     if not normalized:
         return True
     return "VN" in normalized
+
+
+def get_video_like_count(video_dict: dict) -> int:
+    """Extract video like count from common TikTok payload fields."""
+    stats = video_dict.get("stats", {}) or {}
+    candidates = [
+        stats.get("diggCount"),
+        stats.get("likeCount"),
+        video_dict.get("diggCount"),
+        video_dict.get("likeCount"),
+    ]
+    for c in candidates:
+        try:
+            if c is not None:
+                return int(c)
+        except (TypeError, ValueError):
+            continue
+    return 0
 
 
 async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
@@ -117,7 +137,8 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
 
         print(
             f"[Crawler] Fetching up to {TRENDING_VIDEO_COUNT} trending candidates (VN), "
-            f"keeping max {MAX_FILTERED_VIDEOS} videos from last {RECENT_DAYS} days..."
+            f"keeping max {MAX_FILTERED_VIDEOS} videos from last {RECENT_DAYS} days, "
+            f"video likes >= {VIDEO_MIN_LIKES}, comment likes >= {COMMENT_MIN_LIKES}..."
         )
 
         try:
@@ -126,6 +147,8 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
                 if not is_recent_video(video_payload, max_age_days=RECENT_DAYS):
                     continue
                 if not is_vietnam_video(video_payload):
+                    continue
+                if get_video_like_count(video_payload) < VIDEO_MIN_LIKES:
                     continue
 
                 video_id = video.id
@@ -138,6 +161,8 @@ async def crawl_top_comments(ms_tokens: list[str] | None = None) -> dict:
                 try:
                     comment_count = 0
                     async for comment in video.comments(count=COMMENTS_PER_VIDEO):
+                        if int(comment.likes_count or 0) < COMMENT_MIN_LIKES:
+                            continue
                         all_comments.append({
                             "comment_id": comment.id,
                             "text": comment.text,
