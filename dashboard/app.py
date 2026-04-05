@@ -10,12 +10,13 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from glob import glob
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -28,6 +29,16 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+SCHEDULER_ENABLED = env_flag("ENABLE_SCHEDULER", default=True)
 
 
 # ── Scheduler ──────────────────────────────────────────────────────────────
@@ -47,18 +58,24 @@ async def crawl_job():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        crawl_job,
-        CronTrigger(hour="0,6,12,18", minute=0, timezone="Asia/Ho_Chi_Minh"),
-        id="crawl_every_6h",
-        name="Crawl every 6h",
-    )
-    scheduler.start()
-    logger.info("[Scheduler] Started — jobs at 0h/6h/12h/18h (VN time)")
+    scheduler = None
+    if SCHEDULER_ENABLED:
+        scheduler = AsyncIOScheduler()
+        scheduler.add_job(
+            crawl_job,
+            CronTrigger(hour="0,6,12,18", minute=0, timezone="Asia/Ho_Chi_Minh"),
+            id="crawl_every_6h",
+            name="Crawl every 6h",
+        )
+        scheduler.start()
+        logger.info("[Scheduler] Started — jobs at 0h/6h/12h/18h (VN time)")
+    else:
+        logger.info("[Scheduler] Disabled by ENABLE_SCHEDULER=false")
+
     yield
-    scheduler.shutdown()
-    logger.info("[Scheduler] Stopped.")
+    if scheduler is not None:
+        scheduler.shutdown()
+        logger.info("[Scheduler] Stopped.")
 
 
 # ── App ────────────────────────────────────────────────────────────────────
@@ -106,6 +123,66 @@ def load_snapshot(filename: str) -> dict | None:
     return None
 
 
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_payload(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Payload must be an object")
+
+    now = datetime.now(timezone.utc)
+    crawled_at = payload.get("crawled_at")
+    if not isinstance(crawled_at, str) or not crawled_at.strip():
+        crawled_at = now.isoformat()
+
+    period = payload.get("period")
+    if not isinstance(period, str) or not period.strip():
+        period = f"{now.hour:02d}00"
+
+    top_comments = payload.get("top_comments")
+    if not isinstance(top_comments, list):
+        top_comments = []
+
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        errors = []
+
+    return {
+        "crawled_at": crawled_at,
+        "period": period,
+        "videos_crawled": _safe_int(payload.get("videos_crawled"), 0),
+        "total_comments_found": _safe_int(payload.get("total_comments_found"), len(top_comments)),
+        "errors": errors,
+        "top_comments": top_comments,
+    }
+
+
+def save_payload(payload: dict) -> str:
+    normalized = normalize_payload(payload)
+
+    try:
+        crawled_at = datetime.fromisoformat(normalized["crawled_at"])
+    except ValueError:
+        crawled_at = datetime.now(timezone.utc)
+        normalized["crawled_at"] = crawled_at.isoformat()
+
+    filename = f"{crawled_at.strftime('%Y-%m-%d')}_{normalized['period']}.json"
+    filepath = DATA_DIR / filename
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(normalized, f, ensure_ascii=False, indent=2)
+
+    latest_path = DATA_DIR / "latest.json"
+    with open(latest_path, "w", encoding="utf-8") as f:
+        json.dump(normalized, f, ensure_ascii=False, indent=2)
+
+    return filename
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -127,7 +204,7 @@ async def dashboard(request: Request, snapshot: str | None = None):
 async def api_latest():
     data = load_latest()
     if data is None:
-        return {"error": "No data yet. Waiting for first scheduled crawl."}
+        return {"error": "No data yet. Waiting for first update."}
     return data
 
 
@@ -150,3 +227,22 @@ async def trigger_crawl():
     import asyncio
     asyncio.create_task(crawl_job())
     return {"status": "crawl started"}
+
+
+@app.post("/api/upload-latest")
+async def upload_latest(
+    payload: dict = Body(...),
+    x_upload_key: str | None = Header(default=None, alias="X-Upload-Key"),
+):
+    expected_key = os.environ.get("UPLOAD_API_KEY", "").strip()
+    if not expected_key:
+        raise HTTPException(status_code=503, detail="UPLOAD_API_KEY is not configured")
+
+    if x_upload_key != expected_key:
+        raise HTTPException(status_code=401, detail="Invalid upload key")
+
+    try:
+        filename = save_payload(payload)
+        return {"status": "ok", "saved": filename}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
